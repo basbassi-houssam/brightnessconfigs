@@ -1,73 +1,68 @@
 #!/bin/sh
 # =============================================================
-# Author:  gh0stzk (modified for ddcutil by ChatGPT)
+# Author:  gh0stzk (modified for xrandr by ChatGPT)
 # Original Repo: https://github.com/gh0stzk/dotfiles
 # Date:    Modified on 14.06.2025
 #
-# Brightness - Hardware brightness control using ddcutil
+# Brightness - Software brightness control using xrandr
 # Features:
-#   ✔ Brightness adjustments in 5% increments
-#   ✔ Configurable minimum of 2% brightness
+#   ✔ Brightness adjustments in 0.05 increments
+#   ✔ Configurable minimum of 0.2 brightness
 #   ✔ OSD notifications with graphical progress bar
 #
 # Dependencies:
-#   → ddcutil
+#   → xrandr
 #   → dunst
 # =============================================================
 
 #!/bin/bash
 
 DIR="$HOME/.config/bspwm/src/assets"
-BRIGHTNESS_STEPS=5
-MIN_BRIGHTNESS=2
-
-# Get the first detected monitor
-MONITOR=$(ddcutil detect --brief | awk '/Display/ {print $2; exit}')
+BRIGHTNESS_STEPS=0.1
+MIN_BRIGHTNESS=0.4
+CURRENT_DISPLAY=$(xrandr | grep " connected" | cut -f1 -d" ")
 
 get_brightness() {
-    ddcutil getvcp 10 --brief -d "$MONITOR" | awk '{print $4}'
+    xrandr --verbose | grep -i brightness | awk '{print $2}' | head -n1
 }
 
 send_notification() {
-    brightness="$1"
-    icon="$DIR/brightness.svg"
-    bar=""
-    bar_length=$((brightness / BRIGHTNESS_STEPS))
-
-    i=0
-    while [ "$i" -lt "$bar_length" ]; do
-        bar="${bar}─"
-        i=$((i + 1))
-    done
-
-    dunstify "Brightness $brightness%" -i "$icon" -r 5555 -h int:value:$(($brightness))
+    scaled=$(echo "scale=0; ($1 - 0.4) * 100 / 1.0" | bc)
+    dunstify "Brightness ${scaled}%" -i "$DIR/brightness.svg" -r 5555 -h int:value:"$scaled"
 }
 
 adjust_brightness() {
-    current="$(get_brightness)"
-
     case $1 in
         up)
-            if [ "$current" -eq "$MIN_BRIGHTNESS" ]; then
-                ddcutil setvcp 10 "$BRIGHTNESS_STEPS" -d "$MONITOR"
-            else
-                ddcutil setvcp 10 + "$BRIGHTNESS_STEPS" -d "$MONITOR"
-            fi
+            current=$(get_brightness)
+            new=$(echo "scale=2; $current + $BRIGHTNESS_STEPS" | bc)
+			if [ $(echo "$new > 1.4" | bc) -eq 1 ]; then
+				new=1.4
+			fi
+            xrandr --output "$CURRENT_DISPLAY" --brightness "$new"
             ;;
         down)
-            threshold=$((MIN_BRIGHTNESS + BRIGHTNESS_STEPS))
-            if [ "$current" -le "$threshold" ]; then
-                ddcutil setvcp 10 "$MIN_BRIGHTNESS" -d "$MONITOR"
-            else
-                ddcutil setvcp 10 - "$BRIGHTNESS_STEPS" -d "$MONITOR"
+            current=$(get_brightness)
+            new=$(echo "scale=2; $current - $BRIGHTNESS_STEPS" | bc)
+            if [ $(echo "$new < $MIN_BRIGHTNESS" | bc) -eq 1 ]; then
+                new=$MIN_BRIGHTNESS
             fi
+            xrandr --output "$CURRENT_DISPLAY" --brightness "$new"
+            ;;
+        get)
+            echo "$(echo "scale=0; ($(get_brightness) - 0.4) * 100 / 1.0" | bc)"
+            exit 0
+            ;;
+        reset)
+            xrandr --output "$CURRENT_DISPLAY" --brightness 0.9
             ;;
     esac
 
+    # Update polybar immediately by sending a signal
+    polybar-msg hook brightness 1
     send_notification "$(get_brightness)"
 }
 
 case $1 in
-    up|down) adjust_brightness "$1" ;;
+    up|down|get|reset) adjust_brightness "$1" ;;
 esac
-
